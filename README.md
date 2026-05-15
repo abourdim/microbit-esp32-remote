@@ -20,6 +20,18 @@ platformio/
 
 The two source files are **identical**; pick whichever toolchain you prefer.
 
+## Which toolchain should I use?
+
+On the **ESP32-C3 Super Mini** (and other boards using the C3's native
+USB-CDC instead of an external USB-serial bridge), **prefer PlatformIO
+for uploading**. Its `platformio.ini` pins `upload_speed = 115200` and
+sets `--no-stub`, both of which are required to work around USB-CDC
+re-enumeration quirks in esptool. Arduino IDE / arduino-cli has no
+clean way to pass `--no-stub` through, so uploads may fail with
+"No serial data received" or "Unable to verify flash chip connection".
+If you must use arduino-cli, hold the BOOT button while pressing RESET
+to force ROM-bootloader mode, then immediately upload.
+
 ## Arduino IDE
 
 1. Install the **ESP32 by Espressif Systems** board package (Boards Manager).
