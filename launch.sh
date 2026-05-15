@@ -27,7 +27,7 @@ PIO_ENV="esp32-c3-supermini"
 ACLI_CORE="esp32:esp32"
 # CDCOnBoot=cdc enables Serial via the C3's native USB peripheral (matches
 # the ARDUINO_USB_CDC_ON_BOOT=1 flag in platformio.ini).
-ACLI_FQBN="esp32:esp32:esp32c3:CDCOnBoot=cdc,UploadSpeed=921600"
+ACLI_FQBN="esp32:esp32:esp32c3:CDCOnBoot=cdc,UploadSpeed=115200"
 ACLI_BAUD=115200
 
 # Where to install arduino-cli if not already on PATH
