@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# PlatformIO
+platformio/.pio/
+
+# Arduino IDE / arduino-cli
+arduino/**/build/
+arduino/**/*.elf
+arduino/**/*.bin
+arduino/**/*.hex
+arduino/**/*.map
+
+# Editors
+.vscode/
+.idea/
+*.swp
