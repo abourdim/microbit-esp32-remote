@@ -38,6 +38,8 @@
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#include <esp_system.h>
+#include <esp_chip_info.h>
 
 // =====================================================================
 //  CONFIGURATION  —  edit this section for your project
@@ -96,17 +98,40 @@ static inline void sendValue(const String& id, const String& val) {
 //  BLE callbacks
 // =====================================================================
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* /*server*/, NimBLEConnInfo& /*info*/) override {
+  void onConnect(NimBLEServer* /*server*/, NimBLEConnInfo& info) override {
     gConnected = true;
     gRxBuffer  = "";
-    Serial.println("[BLE] Client connected");
+    Serial.printf("[BLE] Client connected  peer=%s\n",
+                  info.getAddress().toString().c_str());
   }
   void onDisconnect(NimBLEServer* /*server*/, NimBLEConnInfo& /*info*/, int reason) override {
     gConnected = false;
-    Serial.printf("[BLE] Client disconnected (reason 0x%02x)\n", reason);
+    Serial.printf("[BLE] Client disconnected (reason 0x%02x) — re-advertising\n", reason);
     NimBLEDevice::startAdvertising();
   }
+  void onMTUChange(uint16_t mtu, NimBLEConnInfo& /*info*/) override {
+    Serial.printf("[BLE] MTU negotiated: %u\n", mtu);
+  }
 };
+
+// Human-readable name for an ESP reset reason code.
+static const char* resetReasonStr(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT (external pin)";
+    case ESP_RST_SW:        return "SW (esp_restart)";
+    case ESP_RST_PANIC:     return "PANIC (exception/crash)";
+    case ESP_RST_INT_WDT:   return "INT_WDT (interrupt watchdog)";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT (task watchdog)";
+    case ESP_RST_WDT:       return "WDT (other watchdog)";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP wakeup";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    case ESP_RST_SDIO:      return "SDIO";
+    case ESP_RST_USB:       return "USB host reset";
+    case ESP_RST_JTAG:      return "JTAG";
+    default:                return "UNKNOWN";
+  }
+}
 
 class RxCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& /*info*/) override {
@@ -256,18 +281,55 @@ static void handleWidget(const String& id, const String& val) {
 // =====================================================================
 void setup() {
   Serial.begin(115200);
-  delay(50);
+  delay(200);                                 // give USB-CDC time to enumerate
   Serial.println();
-  Serial.println("=== Micro:bit Remote — ESP32 firmware ===");
+  Serial.println("=================================================");
+  Serial.println("=== Micro:bit Remote — ESP32 firmware (boot) ===");
+  Serial.println("=================================================");
 
+  // ----- Boot diagnostics -----------------------------------------------
+  esp_reset_reason_t rr = esp_reset_reason();
+  Serial.printf("[BOOT] reset_reason : %d (%s)\n", (int)rr, resetReasonStr(rr));
+
+  esp_chip_info_t chip;
+  esp_chip_info(&chip);
+  Serial.printf("[BOOT] chip_model   : %d  cores=%u  rev=%u  features=0x%08lx\n",
+                (int)chip.model, chip.cores, chip.revision,
+                (unsigned long)chip.features);
+  Serial.printf("[BOOT] sdk_version  : %s\n", esp_get_idf_version());
+  Serial.printf("[BOOT] arduino_core : %d.%d.%d\n",
+                ESP_ARDUINO_VERSION_MAJOR, ESP_ARDUINO_VERSION_MINOR,
+                ESP_ARDUINO_VERSION_PATCH);
+  Serial.printf("[BOOT] cpu_mhz      : %lu\n",
+                (unsigned long)getCpuFrequencyMhz());
+  Serial.printf("[BOOT] free_heap    : %lu bytes\n",
+                (unsigned long)ESP.getFreeHeap());
+  Serial.printf("[BOOT] min_heap     : %lu bytes\n",
+                (unsigned long)ESP.getMinFreeHeap());
+  Serial.printf("[BOOT] flash_size   : %lu bytes\n",
+                (unsigned long)ESP.getFlashChipSize());
+  Serial.printf("[BOOT] sketch_size  : %lu / %lu bytes\n",
+                (unsigned long)ESP.getSketchSize(),
+                (unsigned long)ESP.getFreeSketchSpace());
+  Serial.flush();
+
+  // ----- Step 1: GPIO ---------------------------------------------------
+  Serial.println("[SETUP] step 1/4 — GPIO init");
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LED_OFF);
 
+  // ----- Step 2: NimBLE init -------------------------------------------
+  Serial.println("[SETUP] step 2/4 — NimBLEDevice::init");
   NimBLEDevice::init(BLE_DEVICE_NAME);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);   // max TX power for range
-  Serial.printf("[BLE] Local MAC: %s\n",
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  Serial.printf("[BLE] device_name   : '%s'\n", BLE_DEVICE_NAME);
+  Serial.printf("[BLE] local_mac     : %s\n",
                 NimBLEDevice::getAddress().toString().c_str());
+  Serial.printf("[BLE] heap_after_init: %lu bytes\n",
+                (unsigned long)ESP.getFreeHeap());
 
+  // ----- Step 3: GATT service + characteristics ------------------------
+  Serial.println("[SETUP] step 3/4 — GATT service setup");
   NimBLEServer* server = NimBLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
 
@@ -283,33 +345,53 @@ void setup() {
   rxChar->setCallbacks(new RxCallbacks());
 
   svc->start();
+  Serial.printf("[BLE] service_uuid  : %s\n", UART_SERVICE_UUID);
+  Serial.printf("[BLE] tx_char_uuid  : %s (notify)\n", UART_TX_CHAR_UUID);
+  Serial.printf("[BLE] rx_char_uuid  : %s (write)\n",  UART_RX_CHAR_UUID);
 
-  // ---------------------------------------------------------------
-  // Advertising:
-  //   - Primary packet:   flags + 128-bit service UUID
-  //   - Scan response:    the name (kept here to guarantee it survives)
-  // The rxy web app filters scans by namePrefix "BBC micro:bit", which
-  // matches whether the name is in the primary packet or the scan response.
-  // ---------------------------------------------------------------
+  // ----- Step 4: Advertising -------------------------------------------
+  // Primary packet:  flags + 128-bit service UUID.
+  // Scan response:   the name (kept here to guarantee it survives).
+  // rxy filters by namePrefix "BBC micro:bit", matched in either packet.
+  Serial.println("[SETUP] step 4/4 — start advertising");
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(UART_SERVICE_UUID);
   adv->setName(BLE_DEVICE_NAME);
   adv->enableScanResponse(true);
   NimBLEDevice::startAdvertising();
 
-  Serial.printf("[BLE] Advertising as '%s'\n", BLE_DEVICE_NAME);
+  Serial.printf("[BLE] advertising as: '%s'\n", BLE_DEVICE_NAME);
+  Serial.printf("[BOOT] setup() OK   — free_heap=%lu bytes\n",
+                (unsigned long)ESP.getFreeHeap());
   Serial.println("[BLE] Open https://abourdim.github.io/rxy/ and click Connect.");
+  Serial.println("=================================================");
+  Serial.flush();
 }
 
 void loop() {
+  // -----------------------------------------------------------------
+  // Periodic heartbeat — confirms the firmware is alive and shows
+  // connection state + heap headroom. Cheap, prints once every 5 s.
+  // -----------------------------------------------------------------
+  static uint32_t lastBeat = 0;
+  const uint32_t now = millis();
+  if (now - lastBeat >= 5000) {
+    lastBeat = now;
+    Serial.printf("[HB] uptime=%lus  connected=%d  heap=%lu  min_heap=%lu\n",
+                  (unsigned long)(now / 1000),
+                  gConnected ? 1 : 0,
+                  (unsigned long)ESP.getFreeHeap(),
+                  (unsigned long)ESP.getMinFreeHeap());
+  }
+
   // -----------------------------------------------------------------
   // Periodic update example. Uncomment + adapt for your project.
   // The rxy web app rate-limits incoming messages to one per 200 ms,
   // so do not flood it. A 200–500 ms cadence is comfortable.
   // -----------------------------------------------------------------
-  // static uint32_t last = 0;
-  // if (gConnected && millis() - last > 500) {
-  //   last = millis();
+  // static uint32_t lastUpd = 0;
+  // if (gConnected && now - lastUpd > 500) {
+  //   lastUpd = now;
   //   sendValue("gauge_temp", String((int)temperatureRead()));
   // }
 }
