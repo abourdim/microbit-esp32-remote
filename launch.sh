@@ -460,9 +460,9 @@ print_header() {
 pick_toolchain() {
   while true; do
     print_header
-    log "  ${BOLD}P)${NC} PlatformIO"
-    log "  ${BOLD}A)${NC} arduino-cli"
-    log "  ${BOLD}Q)${NC} Quit"
+    log "  ${BOLD}${YELLOW}P)${NC} PlatformIO"
+    log "  ${BOLD}${YELLOW}A)${NC} arduino-cli"
+    log "  ${BOLD}${YELLOW}Q)${NC} Quit"
     log ""
     local choice
     read -r -p "Pick a toolchain: " choice
@@ -504,17 +504,17 @@ dispatch() {
 action_menu() {
   while true; do
     print_header
-    log "  ${BOLD}1)${NC} Check environment"
-    log "  ${BOLD}2)${NC} Install / update toolchain"
-    log "  ${BOLD}3)${NC} Compile firmware"
-    log "  ${BOLD}4)${NC} Upload firmware"
-    log "  ${BOLD}5)${NC} Open serial monitor"
-    log "  ${BOLD}6)${NC} Clean build"
-    log "  ${BOLD}7)${NC} Show detected USB ports"
-    log "  ${BOLD}8)${NC} Set port manually  ${DIM}(current: ${USER_PORT:-<auto>})${NC}"
-    log "  ${BOLD}9)${NC} Do everything (install → compile → upload → monitor)"
-    log "  ${BOLD}0)${NC} Switch toolchain"
-    log "  ${BOLD}Q)${NC} Quit"
+    log "  ${BOLD}${YELLOW}1)${NC} Check environment"
+    log "  ${BOLD}${YELLOW}2)${NC} Install / update toolchain"
+    log "  ${BOLD}${YELLOW}3)${NC} Compile firmware"
+    log "  ${BOLD}${YELLOW}4)${NC} Upload firmware"
+    log "  ${BOLD}${YELLOW}5)${NC} Open serial monitor"
+    log "  ${BOLD}${YELLOW}6)${NC} Clean build"
+    log "  ${BOLD}${YELLOW}7)${NC} Show detected USB ports"
+    log "  ${BOLD}${YELLOW}8)${NC} Set port manually  ${DIM}(current: ${USER_PORT:-<auto>})${NC}"
+    log "  ${BOLD}${YELLOW}9)${NC} Do everything (install → compile → upload → monitor)"
+    log "  ${BOLD}${YELLOW}0)${NC} Switch toolchain"
+    log "  ${BOLD}${YELLOW}Q)${NC} Quit"
     log ""
     local choice
     read -r -p "Choice: " choice
