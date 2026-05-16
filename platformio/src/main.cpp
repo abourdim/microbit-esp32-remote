@@ -192,16 +192,75 @@ static void sendCfg() {
   Serial.println("[BLE] Sent CFG");
 }
 
-// Print the current LAYOUT_CFG_BASE64 to Serial, framed the same way
-// it is sent over BLE. Call from the button handler.
-static void printCfg() {
+// Dump every piece of state we know about — build info, runtime info,
+// BLE state, and the current LAYOUT_CFG_BASE64 (in the same framing
+// it is sent over BLE). Called from the button handler. A single
+// press gives you a complete snapshot of the firmware at that moment.
+static void printAllConfig() {
+  // -------- Chip / build --------
+  esp_chip_info_t chip;
+  esp_chip_info(&chip);
+
+  Serial.println();
+  Serial.println("=================== STATE DUMP ===================");
+  Serial.printf("[BUILD ] firmware     : Micro:bit Remote — ESP32\n");
+  Serial.printf("[BUILD ] compiled     : %s %s\n", __DATE__, __TIME__);
+  Serial.printf("[CHIP  ] model        : %d  cores=%u  rev=%u  features=0x%08lx\n",
+                (int)chip.model, chip.cores, chip.revision,
+                (unsigned long)chip.features);
+  Serial.printf("[CHIP  ] sdk_version  : %s\n", esp_get_idf_version());
+  Serial.printf("[CHIP  ] arduino_core : %d.%d.%d\n",
+                ESP_ARDUINO_VERSION_MAJOR, ESP_ARDUINO_VERSION_MINOR,
+                ESP_ARDUINO_VERSION_PATCH);
+  Serial.printf("[CHIP  ] cpu_mhz      : %lu\n",
+                (unsigned long)getCpuFrequencyMhz());
+  Serial.printf("[FLASH ] size         : %lu bytes\n",
+                (unsigned long)ESP.getFlashChipSize());
+  Serial.printf("[FLASH ] sketch       : %lu / %lu bytes (free %lu)\n",
+                (unsigned long)ESP.getSketchSize(),
+                (unsigned long)(ESP.getSketchSize() + ESP.getFreeSketchSpace()),
+                (unsigned long)ESP.getFreeSketchSpace());
+
+  // -------- Runtime --------
+  esp_reset_reason_t rr = esp_reset_reason();
+  Serial.printf("[RUN   ] reset_reason : %d (%s)\n", (int)rr, resetReasonStr(rr));
+  Serial.printf("[RUN   ] uptime       : %lu s\n",
+                (unsigned long)(millis() / 1000));
+  Serial.printf("[RUN   ] free_heap    : %lu bytes\n",
+                (unsigned long)ESP.getFreeHeap());
+  Serial.printf("[RUN   ] min_heap     : %lu bytes\n",
+                (unsigned long)ESP.getMinFreeHeap());
+
+  // -------- GPIO --------
+  Serial.printf("[GPIO  ] LED_PIN      : %d  state=%s  (active=%s)\n",
+                LED_PIN,
+                digitalRead(LED_PIN) == LED_ON ? "ON" : "OFF",
+                LED_ON == LOW ? "LOW" : "HIGH");
+  Serial.printf("[GPIO  ] BUTTON_PIN   : %d  state=%s  (active=%s)\n",
+                BUTTON_PIN,
+                digitalRead(BUTTON_PIN) == BUTTON_ACTIVE ? "PRESSED" : "released",
+                BUTTON_ACTIVE == LOW ? "LOW" : "HIGH");
+
+  // -------- BLE --------
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  Serial.printf("[BLE   ] device_name  : '%s'\n", BLE_DEVICE_NAME);
+  Serial.printf("[BLE   ] local_mac    : %s\n",
+                NimBLEDevice::getAddress().toString().c_str());
+  Serial.printf("[BLE   ] service_uuid : %s\n", UART_SERVICE_UUID);
+  Serial.printf("[BLE   ] tx_char_uuid : %s (notify)\n", UART_TX_CHAR_UUID);
+  Serial.printf("[BLE   ] rx_char_uuid : %s (write)\n",  UART_RX_CHAR_UUID);
+  Serial.printf("[BLE   ] advertising  : %s\n",
+                (adv && adv->isAdvertising()) ? "YES" : "no");
+  Serial.printf("[BLE   ] connected    : %s\n", gConnected ? "YES" : "no");
+  Serial.printf("[BLE   ] rx_buf_len   : %u bytes\n",
+                (unsigned)gRxBuffer.length());
+
+  // -------- Layout CFG (same framing as BLE GETCFG reply) --------
   const size_t n = strlen(LAYOUT_CFG_BASE64);
   const size_t CHUNK = 18;
-  Serial.println();
-  Serial.println("---------------- CFG DUMP (button) ----------------");
-  Serial.printf("[CFG] device='%s' total_bytes=%lu chunks=%lu\n",
-                BLE_DEVICE_NAME,
-                (unsigned long)n,
+  Serial.printf("[CFG   ] total_bytes  : %lu\n", (unsigned long)n);
+  Serial.printf("[CFG   ] chunk_size   : %lu\n", (unsigned long)CHUNK);
+  Serial.printf("[CFG   ] chunks       : %lu\n",
                 (unsigned long)((n + CHUNK - 1) / CHUNK));
   Serial.println("CFGBEGIN");
   for (size_t i = 0; i < n; i += CHUNK) {
@@ -212,7 +271,9 @@ static void printCfg() {
     Serial.println();
   }
   Serial.println("CFGEND");
-  Serial.println("---------------------------------------------------");
+
+  Serial.println("==================================================");
+  Serial.flush();
 }
 
 static void handleLine(const String& line) {
@@ -437,8 +498,8 @@ void loop() {
   if (btnNow != btnLast && (now - btnLastChange) > 30) {
     btnLastChange = now;
     if (btnNow == BUTTON_ACTIVE) {
-      Serial.println("[BTN] press detected — dumping CFG");
-      printCfg();
+      Serial.println("[BTN] press detected — dumping full state");
+      printAllConfig();
     }
     btnLast = btnNow;
   }
