@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>microbit-esp32-remote — project notes</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --fg: #1a1a1a;
+    --muted: #666;
+    --accent: #b4451e;
+    --ok: #2a7a2a;
+    --warn: #b48a00;
+    --err: #a02020;
+    --rule: #d8d4cc;
+    --code-bg: #f0ece4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font: 15.5px/1.55 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    color: var(--fg); background: var(--bg);
+    max-width: 880px; margin: 2.2em auto; padding: 0 1.4em;
+  }
+  h1 { font-size: 1.7em; margin: 0 0 .1em 0; }
+  h1 + .sub { color: var(--muted); margin: 0 0 1.6em 0; font-size: .96em; }
+  h2 {
+    margin: 2.0em 0 .55em 0; padding-bottom: .3em;
+    border-bottom: 1px solid var(--rule); font-size: 1.18em;
+  }
+  h3 { margin: 1.2em 0 .35em 0; font-size: 1.02em; color: var(--accent); }
+  code {
+    font: 13px/1.4 "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg); padding: 1px 5px; border-radius: 3px;
+  }
+  pre {
+    font: 12.5px/1.45 "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg); padding: .8em 1em; border-radius: 5px;
+    overflow-x: auto; border: 1px solid var(--rule);
+  }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: .6em 0 1em 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: .42em .6em; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { background: var(--code-bg); font-weight: 600; }
+  .tag {
+    display: inline-block; font-size: 11.5px; font-weight: 600;
+    padding: 1px 7px; border-radius: 10px; vertical-align: 2px;
+    margin-right: .35em; color: #fff;
+  }
+  .tag.ok { background: var(--ok); }
+  .tag.warn { background: var(--warn); }
+  .tag.err { background: var(--err); }
+  .tag.info { background: #2a5a8a; }
+  .note { border-left: 3px solid var(--accent); padding: .55em .9em; margin: .6em 0; background: #fff5ee; border-radius: 0 4px 4px 0; }
+  .warn { border-left: 3px solid var(--warn); padding: .55em .9em; margin: .6em 0; background: #fff9e6; border-radius: 0 4px 4px 0; }
+  .err { border-left: 3px solid var(--err); padding: .55em .9em; margin: .6em 0; background: #fdebeb; border-radius: 0 4px 4px 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; }
+  ul { padding-left: 1.4em; }
+  li { margin: .25em 0; }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  hr { border: none; border-top: 1px solid var(--rule); margin: 2em 0; }
+</style>
+</head>
+<body>
+
+<h1>microbit-esp32-remote — project notes</h1>
+<p class="sub">
+  ESP32 firmware that impersonates a BBC micro:bit so the unmodified
+  <a href="https://abourdim.github.io/rxy/">rxy</a> web app can drive it.
+  Last updated <span class="muted">2026-05-15</span>.
+  Repo: <a href="https://github.com/abourdim/microbit-esp32-remote">abourdim/microbit-esp32-remote</a>.
+</p>
+
+<h2>1. The two ESP32-C3 USB-CDC upload traps</h2>
+<p>
+  The C3 Super Mini exposes its USB-C port through the chip's native USB
+  peripheral — there is no CH340/CP2102 bridge. <code>esptool</code>'s
+  default flow makes two assumptions that this peripheral breaks.
+</p>
+
+<table>
+<tr><th>#</th><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+<tr>
+  <td>1</td>
+  <td><code>A fatal error occurred: No serial data received.</code><br>
+      <span class="muted">…right after <code>Changing baud rate to 460800</code></span></td>
+  <td>Mid-upload baud switch crashes the CDC endpoint.</td>
+  <td><code>upload_speed = 115200</code> in <code>platformio.ini</code> (single rate end-to-end).</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>Unable to verify flash chip connection (No serial data received.)</code><br>
+      <span class="muted">…right after <code>Stub running...</code></span></td>
+  <td>When the flasher stub takes over from the ROM bootloader, the
+      USB-CDC endpoint re-enumerates and the first post-stub command
+      (read SPI flash JEDEC ID) lands in a dead window.</td>
+  <td><code>upload_flags = --no-stub</code> — keep the ROM bootloader
+      in charge for the whole upload. Slower (~60–90 s) but reliable.</td>
+</tr>
+</table>
+
+<div class="note">
+  <strong>arduino-cli caveat.</strong> There is no clean way to pass
+  <code>--no-stub</code> through an Arduino FQBN. If you must use
+  arduino-cli on this board, hold the <strong>BOOT</strong> button while
+  pressing <strong>RESET</strong> to force ROM-bootloader mode, then
+  immediately upload. Recommended path: use PlatformIO.
+</div>
+
+<h2>2. BLE protocol — what rxy actually expects</h2>
+<p>
+  Verified against <code>abourdim/rxy@main:script.js</code> on 2026-05-15.
+</p>
+
+<h3>2.1 UUIDs (Nordic-UART-style, with a twist)</h3>
+<table>
+<tr><th>Role</th><th>UUID</th></tr>
+<tr><td>Service</td><td><code>6e400001-b5a3-f393-e0a9-e50e24dcca9e</code></td></tr>
+<tr><td>Notify (device → app) — <em>micro:bit TX</em></td><td><code>6e400002-…</code></td></tr>
+<tr><td>Write  (app → device) — <em>micro:bit RX</em></td><td><code>6e400003-…</code></td></tr>
+</table>
+<div class="warn">
+  The roles of <code>0002</code> and <code>0003</code> are the
+  <strong>opposite</strong> of the Nordic UART Service convention used
+  by Adafruit/Bluefruit. We mimic the micro:bit, which assigns them the
+  other way around. The firmware declares the characteristics
+  explicitly, so this is handled.
+</div>
+
+<h3>2.2 Wire protocol</h3>
+<table>
+<tr><th>Direction</th><th>Message</th><th>Notes</th></tr>
+<tr><td>app → device</td><td><code>GETCFG</code></td><td>sent ~500 ms after connect</td></tr>
+<tr><td>app → device</td><td><code>SET &lt;id&gt; &lt;val…&gt;</code></td><td>val may be multi-token (joystick, dpad, xypad)</td></tr>
+<tr><td>device → app</td><td><code>CFGBEGIN</code> / <code>CFG &lt;18-char chunk&gt;</code>… / <code>CFGEND</code></td><td>chunk size 18 is mandatory — matches the MakeCode template</td></tr>
+<tr><td>device → app</td><td><code>UPD &lt;id&gt; &lt;val&gt;</code></td><td>only after <code>CFGEND</code> has been sent</td></tr>
+</table>
+<p>
+  Encoding: ASCII, <code>\n</code>-terminated; <code>\r</code> tolerated.
+  rxy rate-limits incoming messages to ~one per 200 ms — do not flood
+  it with <code>UPD</code>s; 200–500 ms cadence is comfortable.
+</p>
+
+<h3>2.3 Advertising packet budget</h3>
+<p>
+  BLE advertisement payload is 31 bytes. With a 128-bit service UUID
+  (~18 bytes incl. headers) plus flags (3 bytes), the name does not
+  fit in the primary packet. Solution: <strong>UUID in the primary,
+  name in the scan response</strong> (<code>adv-&gt;setName()</code>
+  with <code>enableScanResponse(true)</code>). rxy filters by
+  <code>namePrefix: 'BBC micro:bit'</code>, which matches names in
+  either packet.
+</p>
+
+<h3>2.4 Name mismatch (open item)</h3>
+<div class="warn">
+  README promises <code>BBC micro:bit ESP32</code> as the advertised
+  name, but the firmware advertises plain <code>BBC micro:bit</code>
+  (<code>main.cpp:52</code>). Both pass the rxy <code>namePrefix</code>
+  filter, but only the longer name lets you distinguish the ESP32 from
+  a real micro:bit in the chooser. Not fixed yet.
+</div>
+
+<h2>3. Customising the layout</h2>
+<ol>
+  <li>Open rxy → <strong>Build</strong> tab → design the remote.</li>
+  <li>Click <strong>📄 Code</strong>. In the generated MakeCode, find
+      <code>const CFG = "…"</code>. Copy the long base64 string.</li>
+  <li>Paste it into <code>LAYOUT_CFG_BASE64</code> in the firmware,
+      replacing the default minimal one-button layout.</li>
+  <li>Re-upload.</li>
+</ol>
+<p>
+  Widget IDs (<code>btn_fire</code>, <code>slider_speed</code>, …) you
+  chose in the Build tab arrive verbatim in <code>SET</code> messages;
+  handle them by name in <code>handleWidget()</code>.
+</p>
+
+<h2>4. Widget value formats</h2>
+<table>
+<tr><th>Prefix</th><th>Widget</th><th>Value format</th></tr>
+<tr><td><code>btn_</code></td><td>Button</td><td><code>0</code> | <code>1</code></td></tr>
+<tr><td><code>slider_</code></td><td>Slider</td><td>integer in widget's min..max range</td></tr>
+<tr><td><code>toggle_</code></td><td>Toggle</td><td><code>0</code> | <code>1</code></td></tr>
+<tr><td><code>joy_</code></td><td>Joystick</td><td><code>&lt;angle 0-360&gt; &lt;dist 0-100&gt;</code><br>angle: 0°=right, 90°=down, 180°=left, 270°=up</td></tr>
+<tr><td><code>dpad_</code></td><td>D-Pad</td><td><code>&lt;up|down|left|right&gt; &lt;0|1&gt;</code></td></tr>
+<tr><td><code>xypad_</code></td><td>XY Pad</td><td><code>&lt;x 0-100&gt; &lt;y 0-100&gt;</code></td></tr>
+<tr><td><code>timer_</code></td><td>Timer</td><td>seconds elapsed (~every 5 s)</td></tr>
+</table>
+<p>
+  Outputs (LEDs, labels, gauges, graphs, battery) are pushed with
+  <code>sendValue("&lt;id&gt;", "&lt;val&gt;")</code> which emits
+  <code>UPD &lt;id&gt; &lt;val&gt;</code>.
+</p>
+
+<h2>5. Daily workflow</h2>
+<pre><code>cd /Users/besma/Desktop/02_choughl/microbit-esp32-remote
+./launch.sh           # interactive menu
+                      #   1 check, 2 install, 3 compile, 4 upload, 5 monitor
+                      #   8 set port, 9 do-everything</code></pre>
+<p>Manual PlatformIO equivalent:</p>
+<pre><code>cd platformio
+pio run                                  # compile
+pio run -t upload                        # upload (~60-90 s with --no-stub)
+pio device monitor -b 115200             # serial monitor</code></pre>
+
+<h2>6. Open items from the code review (2026-05-15)</h2>
+<ol>
+  <li><span class="tag warn">cosmetic</span> Device-name mismatch: README ↔ <code>main.cpp:52</code>. Pick one.</li>
+  <li><span class="tag warn">robustness</span> Add <code>if (!gConnected) return;</code> inside <code>sendCfg()</code>'s chunk loop (<code>main.cpp:145-150</code>) so a mid-CFG disconnect doesn't keep delaying.</li>
+  <li><span class="tag info">nice-to-have</span> <code>NimBLEDevice::setMTU(247);</code> in <code>setup()</code> for longer <code>UPD</code> headroom (e.g. long label/graph strings).</li>
+  <li><span class="tag info">docs</span> One-line BLE-security caveat in README: "no pairing — anyone in range can drive widgets".</li>
+  <li><span class="tag info">micro</span> Convert <code>gRxBuffer</code> from <code>String</code> to <code>char[256]</code> to avoid heap churn over long sessions.</li>
+</ol>
+
+<h2>7. Web Bluetooth compatibility</h2>
+<table>
+<tr><th>Platform</th><th>Browser</th><th>Status</th></tr>
+<tr><td>Desktop / Android</td><td>Chrome, Edge, Opera</td><td><span class="tag ok">works</span></td></tr>
+<tr><td>Android</td><td>Samsung Internet</td><td><span class="tag ok">works</span></td></tr>
+<tr><td>Any platform</td><td>Safari, Firefox</td><td><span class="tag err">no</span> (no Web Bluetooth)</td></tr>
+<tr><td>iOS / iPadOS</td><td>any browser</td><td><span class="tag err">no</span> (Apple blocks Web Bluetooth)</td></tr>
+</table>
+
+<h2>8. Caveats</h2>
+<ul>
+  <li><strong>Name spoofing.</strong> Firmware advertises a name with the <code>BBC micro:bit</code> prefix to satisfy the rxy filter. Any other micro:bit-aware tool may also try to connect.</li>
+  <li><strong>No BLE pairing.</strong> The connection is open — anyone in radio range can write <code>SET</code> commands. Fine for a desk-toy; not for production.</li>
+  <li><strong>One connection at a time.</strong> BLE peripherals hold a single central; reconnecting from another phone requires disconnecting first.</li>
+  <li><strong>Native USB resets.</strong> A firmware crash takes the USB-CDC endpoint down with it; the host may need a re-plug.</li>
+</ul>
+
+<h2>9. Useful references</h2>
+<ul>
+  <li><a href="https://abourdim.github.io/rxy/">rxy web app</a></li>
+  <li><a href="https://github.com/abourdim/rxy">rxy source</a> — <code>script.js</code> for protocol audit</li>
+  <li><a href="https://github.com/h2zero/NimBLE-Arduino">NimBLE-Arduino</a> (≥ 2.x)</li>
+  <li><a href="https://docs.platformio.org/page/boards/espressif32/esp32-c3-devkitm-1.html">PIO board: esp32-c3-devkitm-1</a></li>
+</ul>
+
+<hr>
+<p class="muted" style="font-size:13px">
+  Personal working notes. Not part of the public README. Add to
+  <code>.gitignore</code> if you want it kept local.
+</p>
+
+</body>
+</html>
