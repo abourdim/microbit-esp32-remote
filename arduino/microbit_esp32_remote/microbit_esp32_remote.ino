@@ -66,6 +66,14 @@ static const int LED_PIN          = 8;
 static const int LED_ON           = LOW;
 static const int LED_OFF          = HIGH;
 
+// Debug button — when pressed, dumps the current LAYOUT_CFG_BASE64 to
+// Serial in the same "CFGBEGIN / CFG <18-char> / CFGEND" framing that
+// is sent over BLE. Useful to confirm visually that the layout you
+// pasted is what is actually running, without needing a BLE connect.
+// GPIO0 with INPUT_PULLUP — pressed = LOW.
+static const int BUTTON_PIN       = 0;
+static const int BUTTON_ACTIVE    = LOW;
+
 // =====================================================================
 //  BLE UUIDs  —  DO NOT CHANGE (these are the micro:bit's UART service)
 // =====================================================================
@@ -175,6 +183,29 @@ static void sendCfg() {
   }
   sendLine("CFGEND");
   Serial.println("[BLE] Sent CFG");
+}
+
+// Print the current LAYOUT_CFG_BASE64 to Serial, framed the same way
+// it is sent over BLE. Call from the button handler.
+static void printCfg() {
+  const size_t n = strlen(LAYOUT_CFG_BASE64);
+  const size_t CHUNK = 18;
+  Serial.println();
+  Serial.println("---------------- CFG DUMP (button) ----------------");
+  Serial.printf("[CFG] device='%s' total_bytes=%lu chunks=%lu\n",
+                BLE_DEVICE_NAME,
+                (unsigned long)n,
+                (unsigned long)((n + CHUNK - 1) / CHUNK));
+  Serial.println("CFGBEGIN");
+  for (size_t i = 0; i < n; i += CHUNK) {
+    Serial.print("CFG ");
+    for (size_t j = 0; j < CHUNK && (i + j) < n; ++j) {
+      Serial.print(LAYOUT_CFG_BASE64[i + j]);
+    }
+    Serial.println();
+  }
+  Serial.println("CFGEND");
+  Serial.println("---------------------------------------------------");
 }
 
 static void handleLine(const String& line) {
@@ -317,6 +348,9 @@ void setup() {
   Serial.println("[SETUP] step 1/4 — GPIO init");
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LED_OFF);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  Serial.printf("[GPIO] LED_PIN=%d  BUTTON_PIN=%d (INPUT_PULLUP, press to dump CFG)\n",
+                LED_PIN, BUTTON_PIN);
 
   // ----- Step 2: NimBLE init -------------------------------------------
   Serial.println("[SETUP] step 2/4 — NimBLEDevice::init");
@@ -369,12 +403,13 @@ void setup() {
 }
 
 void loop() {
+  const uint32_t now = millis();
+
   // -----------------------------------------------------------------
   // Periodic heartbeat — confirms the firmware is alive and shows
   // connection state + heap headroom. Cheap, prints once every 5 s.
   // -----------------------------------------------------------------
   static uint32_t lastBeat = 0;
-  const uint32_t now = millis();
   if (now - lastBeat >= 5000) {
     lastBeat = now;
     Serial.printf("[HB] uptime=%lus  connected=%d  heap=%lu  min_heap=%lu\n",
@@ -382,6 +417,23 @@ void loop() {
                   gConnected ? 1 : 0,
                   (unsigned long)ESP.getFreeHeap(),
                   (unsigned long)ESP.getMinFreeHeap());
+  }
+
+  // -----------------------------------------------------------------
+  // BUTTON_PIN poll — on a clean press (active-low, debounced 30 ms),
+  // dump the LAYOUT_CFG_BASE64 to Serial. Edge-triggered: only fires
+  // once per press, not while held.
+  // -----------------------------------------------------------------
+  static int      btnLast       = HIGH;
+  static uint32_t btnLastChange = 0;
+  const int btnNow = digitalRead(BUTTON_PIN);
+  if (btnNow != btnLast && (now - btnLastChange) > 30) {
+    btnLastChange = now;
+    if (btnNow == BUTTON_ACTIVE) {
+      Serial.println("[BTN] press detected — dumping CFG");
+      printCfg();
+    }
+    btnLast = btnNow;
   }
 
   // -----------------------------------------------------------------
