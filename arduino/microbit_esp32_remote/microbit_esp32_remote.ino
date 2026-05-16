@@ -70,8 +70,15 @@ static const int LED_OFF          = HIGH;
 // Serial in the same "CFGBEGIN / CFG <18-char> / CFGEND" framing that
 // is sent over BLE. Useful to confirm visually that the layout you
 // pasted is what is actually running, without needing a BLE connect.
-// GPIO0 with INPUT_PULLUP — pressed = LOW.
-static const int BUTTON_PIN       = 0;
+//
+// Defaults to GPIO 9 because that is the on-board BOOT button on the
+// ESP32-C3 Super Mini — no extra wiring needed. CAVEAT: GPIO 9 is also
+// the C3's BOOT strapping pin. Holding this button while the board is
+// powering on / resetting will boot the chip into ROM download mode
+// (firmware will not run). It is safe to press AFTER boot completes.
+// If you want a separate dedicated debug button without that gotcha,
+// wire one between GPIO 0 and GND and change BUTTON_PIN to 0.
+static const int BUTTON_PIN       = 9;
 static const int BUTTON_ACTIVE    = LOW;
 
 // =====================================================================
