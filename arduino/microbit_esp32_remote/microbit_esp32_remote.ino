@@ -173,8 +173,14 @@ class RxCallbacks : public NimBLECharacteristicCallbacks {
 static void sendLine(const String& line) {
   if (!gConnected || gTxChar == nullptr) return;
   String out = line + "\n";
-  gTxChar->setValue((const uint8_t*)out.c_str(), out.length());
-  gTxChar->notify();
+  // ATOMIC notify: pass the payload directly so each call captures its
+  // own bytes. The two-step setValue() + notify() form races on the
+  // characteristic's internal buffer when called back-to-back from
+  // sendCfg() — NimBLE's async host task can read the buffer AFTER a
+  // newer setValue has overwritten it, collapsing several queued
+  // notifications into the last one. Symptom on rxy: only CFGEND
+  // arrives, everything in between vanishes, JSON.parse('') fails.
+  gTxChar->notify((const uint8_t*)out.c_str(), out.length());
 }
 
 static void sendCfg() {
@@ -186,7 +192,7 @@ static void sendCfg() {
     String line = "CFG ";
     for (size_t j = 0; j < CHUNK && (i + j) < n; ++j) line += p[i + j];
     sendLine(line);
-    delay(8);  // pace notifications so the BLE stack does not drop any
+    delay(15);  // pace notifications so the BLE stack does not drop any
   }
   sendLine("CFGEND");
   Serial.println("[BLE] Sent CFG");
@@ -425,6 +431,11 @@ void setup() {
   Serial.println("[SETUP] step 2/4 — NimBLEDevice::init");
   NimBLEDevice::init(BLE_DEVICE_NAME);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+  // Request a larger ATT MTU. Default is 23 bytes (= 20 bytes payload
+  // per notify), which is too small for our 23-byte "CFG <18-char>\n"
+  // lines and would force fragmentation. Centrals negotiate downward
+  // as needed (Chrome on macOS typically lands ~185, phones ~247).
+  NimBLEDevice::setMTU(247);
 
   // Match a real micro:bit's MakeCode "No pairing required: anyone can
   // connect via Bluetooth" mode. Explicit, not relying on NimBLE/SDK
