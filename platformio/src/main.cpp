@@ -466,14 +466,29 @@ void setup() {
   Serial.printf("[BLE] rx_char_uuid  : %s (write)\n",  UART_RX_CHAR_UUID);
 
   // ----- Step 4: Advertising -------------------------------------------
-  // Primary packet:  flags + 128-bit service UUID.
-  // Scan response:   the name (kept here to guarantee it survives).
-  // rxy filters by namePrefix "BBC micro:bit", matched in either packet.
+  // Mimic exactly what a real micro:bit running MakeCode does:
+  //   - Primary packet contains FLAGS + NAME only (no service UUID).
+  //   - The Nordic UART service is exposed via GATT after connect, not
+  //     announced in the advertisement. rxy / bit-playground / nRF
+  //     Connect all discover it via optionalServices on the JS side.
+  //   - Advertising interval pinned to 200 ms (matches MakeCode's
+  //     pxt.json: "advertising_interval": 200).
+  //
+  // Why this matters: with our 13-char name (15 bytes) + a 128-bit
+  // service UUID (18 bytes) + flags (3 bytes), the primary advertising
+  // packet overflows the 31-byte BLE limit and NimBLE is forced to
+  // shove the name into a scan-response packet. macOS Web Bluetooth
+  // (Chrome on macOS) handles scan-response-borne names unreliably —
+  // the device becomes invisible in the pair chooser even though
+  // phones see it fine. Dropping the service UUID frees enough room
+  // for the name to live in the primary packet, which every BLE
+  // central scans reliably.
   Serial.println("[SETUP] step 4/4 — start advertising");
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
-  adv->addServiceUUID(UART_SERVICE_UUID);
   adv->setName(BLE_DEVICE_NAME);
-  adv->enableScanResponse(true);
+  adv->enableScanResponse(false);                       // name fits in primary
+  adv->setMinInterval(0x140);                           // 320 * 0.625 ms = 200 ms
+  adv->setMaxInterval(0x140);
   NimBLEDevice::startAdvertising();
 
   Serial.printf("[BLE] advertising as: '%s'\n", BLE_DEVICE_NAME);
