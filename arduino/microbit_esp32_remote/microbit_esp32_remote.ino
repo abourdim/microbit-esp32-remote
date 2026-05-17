@@ -251,6 +251,7 @@ static void printAllConfig() {
   Serial.printf("[BLE   ] rx_char_uuid : %s (write)\n",  UART_RX_CHAR_UUID);
   Serial.printf("[BLE   ] advertising  : %s\n",
                 (adv && adv->isAdvertising()) ? "YES" : "no");
+  Serial.printf("[BLE   ] security     : open (no pairing required)\n");
   Serial.printf("[BLE   ] connected    : %s\n", gConnected ? "YES" : "no");
   Serial.printf("[BLE   ] rx_buf_len   : %u bytes\n",
                 (unsigned)gRxBuffer.length());
@@ -424,6 +425,19 @@ void setup() {
   Serial.println("[SETUP] step 2/4 — NimBLEDevice::init");
   NimBLEDevice::init(BLE_DEVICE_NAME);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+
+  // Match a real micro:bit's MakeCode "No pairing required: anyone can
+  // connect via Bluetooth" mode. Explicit, not relying on NimBLE/SDK
+  // defaults — those can flip across versions and some BLE centrals
+  // (notably macOS) treat an UNSPECIFIED security policy more strictly
+  // than an explicitly-open one.
+  //
+  // SECURITY CAVEAT: with these settings, anyone in radio range can
+  // write SET commands to this device. Fine for a desk toy / classroom
+  // remote (matches what micro:bits do); WRONG for anything sensitive.
+  NimBLEDevice::setSecurityAuth(false, false, false);   // no bonding / MITM / LESC
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
+  NimBLEDevice::deleteAllBonds();                       // discard any prior pairings
   Serial.printf("[BLE] device_name   : '%s'\n", BLE_DEVICE_NAME);
   Serial.printf("[BLE] local_mac     : %s\n",
                 NimBLEDevice::getAddress().toString().c_str());
